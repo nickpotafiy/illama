@@ -107,14 +107,16 @@ class ILlamaServer:
             handled = True
             chat.print_stats()
         except asyncio.CancelledError:
-            await chat.signal_stop(ChatStatus.COMPLETED, "stop")
-            chat.print_stats()
+            async with self.chats_lock:
+                await chat.signal_stop(ChatStatus.COMPLETED, "stop")
+                chat.print_stats()
             handled = True
             return
         finally:
             if not handled:
-                await chat.signal_stop(ChatStatus.STOPPED, "stop")
-                chat.print_stats()
+                async with self.chats_lock:
+                    await chat.signal_stop(ChatStatus.STOPPED, "stop")
+                    chat.print_stats()
         
         
     async def handle_chat_completions(self, request: Request, chat_request: ChatCompletionsRequest):
@@ -296,45 +298,10 @@ class ILlamaServer:
         for batch, output in enumerate(outputs):
             chat = self.active_chats[batch]
             last_token_logits = output[0]
-            active_chats = self.count_active_chats()
             finished = await chat.sample_next_token(last_token_logits, self.tokenizer, self.model)
             if finished:
                 remove_chats.append(chat)
-        
-        if len(remove_chats) > 0:
-            old_seq_len = self.get_max_seq_length()
-            for remove_chat in remove_chats:
-                active_chats = self.count_active_chats()
-                chat_idx = self.active_chats.index(remove_chat)
-                # if there's multiple active chats, we need to possibly shift cache
-                if active_chats > 1:
-                    # check if the current chat is the last active one
-                    last_chat_index = len(self.active_chats) - 1
-                    last_active_chat = self.active_chats[last_chat_index]
-                    if not last_active_chat == remove_chat:
-                        # swap last chat with current one
-                        self.active_chats[chat_idx] = last_active_chat
-                        del self.active_chats[last_chat_index] # remove the last chat
-                        # shift the last chat's cache to the current one
-                        self.copy_cache(self.cache, self.cache, 0, old_seq_len, last_chat_index, 1, 0, old_seq_len, chat_idx, 1)
-                    else:
-                        del self.active_chats[chat_idx]
-                else:
-                    del self.active_chats[chat_idx]
-            new_seq_len = self.get_max_seq_length()
-            if old_seq_len > new_seq_len:
-                # shift active cache batches left
-                offset = old_seq_len - new_seq_len
-                for i, chat in enumerate(self.active_chats):
-                    # create temp cache to store current chat sequence cache
-                    temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-                    # move chat cache from perm to temp
-                    chat_seq = chat.get_sequence_length()
-                    self.copy_cache(self.cache, temp_cache, offset, chat_seq, i, 1, 0, chat_seq, 0, 1)
-                    # move from temp back to perm, remapping to beginning
-                    self.copy_cache(temp_cache, self.cache, 0, chat_seq, 0, 1, 0, chat_seq, i, 1)
-                
-            self.cache.current_seq_len = new_seq_len
+        return remove_chats
 
 
     async def process_chats(self):
@@ -353,26 +320,59 @@ class ILlamaServer:
                 async with self.chats_lock:  # chats need to be locked for this operation
                     go_to_start = False
                     for chat in self.active_chats:
-                        if chat.is_finished() and chat in self.active_chats:
+                        if chat.is_finished() and chat in self.active_chats and not chat in remove_chats:
                             remove_chats.append(chat)
                             break
-
                         if chat and not chat.preprocessed:
                             await self.preprocess(chat)                            
                             go_to_start = True
                         continue        
                     if len(remove_chats) > 0:
+                        active_chats = self.count_active_chats()
+                        old_seq_len = self.get_max_seq_length()
                         for remove_chat in remove_chats:
-                            index = self.active_chats.index(remove_chat)
-                            del self.active_chats[index]
+                            active_chats = self.count_active_chats()
+                            chat_idx = self.active_chats.index(remove_chat)
+                            # if there's multiple active chats, we need to possibly shift cache
+                            if active_chats > 1:
+                                # check if the current chat is the last active one
+                                last_chat_index = len(self.active_chats) - 1
+                                last_active_chat = self.active_chats[last_chat_index]
+                                if not last_active_chat == remove_chat:
+                                    # swap last chat with current one
+                                    self.active_chats[chat_idx] = last_active_chat
+                                    del self.active_chats[last_chat_index] # remove the last chat
+                                    # shift the last chat's cache to the current one
+                                    self.copy_cache(self.cache, self.cache, 0, old_seq_len, last_chat_index, 1, 0, old_seq_len, chat_idx, 1)
+                                else:
+                                    del self.active_chats[chat_idx]
+                            else:
+                                del self.active_chats[chat_idx]
+                        new_seq_len = self.get_max_seq_length()
+                        if old_seq_len > new_seq_len:
+                            # shift active cache batches left
+                            offset = old_seq_len - new_seq_len
+                            for i, chat in enumerate(self.active_chats):
+                                # create temp cache to store current chat sequence cache
+                                temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+                                # move chat cache from perm to temp
+                                chat_seq = chat.get_sequence_length()
+                                self.copy_cache(self.cache, temp_cache, offset, chat_seq, i, 1, 0, chat_seq, 0, 1)
+                                # move from temp back to perm, remapping to beginning
+                                self.copy_cache(temp_cache, self.cache, 0, chat_seq, 0, 1, 0, chat_seq, i, 1)
+                                
+                        self.cache.current_seq_len = new_seq_len
                         remove_chats.clear()
                         go_to_start = True
-
+                        
                     if go_to_start:
                         continue
                     
-                    await self.batch_forward()
-                            
+                    chats_to_remove = await self.batch_forward()
+                    if len(chats_to_remove) > 0:
+                        for remove in chats_to_remove:
+                            remove_chats.append(remove)
+                    
     def on_startup(self):
         asyncio.get_event_loop().create_task(self.queue_chats())
         asyncio.get_event_loop().create_task(self.process_chats())
