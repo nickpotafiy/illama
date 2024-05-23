@@ -7,3 +7,4 @@
 - Load any ExLlamaV2 compatible models (GPTQ, EXL2, or SafeTensors).
 - Quantization support with GPTQ and EXL2.
 - iLlama uses ExLlamaV2's blazing fast library internally.
+- Distribute model across any number of local GPUs.
