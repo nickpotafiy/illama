@@ -37,16 +37,3 @@ pip3 install -r requirements.txt
 
 This will install [ExLlamaV2](https://github.com/turboderp/exllamav2) and the required libraries.
 
-### PyTorch
-
-Install [PyTorch](https://pytorch.org/) with CUDA 12.1 or higher.
-
-```bash
-conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
-```
-
-Or without conda:
-
-```bash
-pip3 install torch torchvision torchaudio
-```
