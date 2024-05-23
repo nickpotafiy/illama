@@ -302,7 +302,7 @@ class ILlamaServer:
             mask = torch.full((max_length,), float('0.0'), dtype=torch.float16)
             mask[:max_length - chat.get_sequence_length()] = float('-inf')
             attn_masks.append(mask)
-            offset = - 0 - (max_length - chat.get_sequence_length())
+            offset = 0 - (max_length - chat.get_sequence_length())
             pos_offsets.append(torch.IntTensor([offset]))
         
         input_ids = torch.stack(last_tokens)
