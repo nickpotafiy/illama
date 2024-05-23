@@ -1,0 +1,3 @@
+exllamav2>=0.0.21
+tokenizers
+fastapi

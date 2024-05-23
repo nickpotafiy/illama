@@ -169,6 +169,12 @@ class Chat:
         self.status = status
         self.finish_reason = finish_reason
 
+
+    def print_stats(self):
+        print(self.id, self.prompt_tokens, "prompt,", self.completion_tokens, 
+              "completion,", round(self.tokens_per_second(), 2), "tok/s,", "finished", self.finish_reason)
+
+
 class ChatObject:
 
 
@@ -178,7 +184,7 @@ class ChatObject:
         self.created = int(time.time())
 
 
-    def json(self, usage: bool = False) -> dict:
+    def json(self, usage: bool = False, finish_reason: bool = False) -> dict:
         dict = {
             'id': str(self.chat.id),
             'object': self.object_name,
@@ -186,9 +192,12 @@ class ChatObject:
             'model': getattr(self.chat.request, 'model', None),
             'choices': [{
                 'index': 0,
-                'finish_reason': self.chat.finish_reason if self.chat.finish_reason else ""
             }]
         }
+        
+        if finish_reason:
+            dict['choices'][0]['finish_reason'] = getattr(self.chat, 'finish_reason', "")
+            
         if usage:
             dict["usage"] = {
                 "completion_tokens": self.chat.completion_tokens,
@@ -221,19 +230,16 @@ class ChatCompletionChunk(ChatObject):
         super().__init__(chat, "chat.completion.chunk")
 
 
-    def json(self, usage: bool = False) -> dict:
-        json = super().json(usage)
-        if self.chat.is_finished():
-            # Last chunk
-            json['choices'][0]['delta'] = {}
-        elif self.chat.completion_tokens == 0:
-            # First chunk
+    def json(self, usage: bool = False, first_chunk: bool = False, final_chunk: bool = False) -> dict:
+        json = super().json(usage=usage, finish_reason=final_chunk)        
+        if first_chunk:
             json['choices'][0]['delta'] = {
                 'role': 'assistant',
                 'content': ''
             }
+        elif final_chunk:
+            json['choices'][0]['delta'] = {}
         else:
-            # Every other chunk
             json['choices'][0]['delta'] = {
                 'content': self.chat.delta
             }

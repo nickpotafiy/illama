@@ -1,7 +1,6 @@
 from functools import lru_cache
 import time
 import traceback
-from typing import Union
 
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
@@ -18,7 +17,7 @@ from exllamav2 import (
 import asyncio
 import json
 
-from exllamav2.server.openai.util import (
+from illama.util import (
     Chat,
     ChatCompletion,
     ChatCompletionChunk,
