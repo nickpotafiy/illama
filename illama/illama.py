@@ -326,7 +326,7 @@ class ILlamaServer:
                         if chat and not chat.preprocessed:
                             await self.preprocess(chat)                            
                             go_to_start = True
-                        continue        
+                        continue
                     if len(remove_chats) > 0:
                         active_chats = self.count_active_chats()
                         old_seq_len = self.get_max_seq_length()

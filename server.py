@@ -31,14 +31,16 @@ config.prepare()
 tokenizer = ExLlamaV2Tokenizer(config)
 model = ExLlamaV2(config)
 
-print("Cache quant:", cache_quant)
-
 if cache_quant == 16:
     cache = ExLlamaV2Cache(model, batch_size, lazy=True)
 elif cache_quant == 8:
-    cache = ExLlamaV2Cache_8bit(model, batch_size, lazy=True)
+    print("8-Bit cache not yet supported")
+    exit(0)
+    # cache = ExLlamaV2Cache_8bit(model, batch_size, lazy=True)
 elif cache_quant == 4:
-    cache = ExLlamaV2Cache_Q4(model, batch_size, lazy=True)
+    print("4-Bit cache not yet supported")
+    exit(0)
+    # cache = ExLlamaV2Cache_Q4(model, batch_size, lazy=True)
 else:
     print("Unsupported cache quant", cache_quant)
     exit(0)
