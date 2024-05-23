@@ -1,5 +1,5 @@
 # Inference Llama
-**iLlama** is a fast inference server for running Llama and ExLlamav2 based large language models.
+**iLlama** is a fast inference server for running Llama and ExLlamav2 based large language models (LLMs).
 
 ## Features
 - Dynamic batching - Handles multiple completion requests simultaneously.
