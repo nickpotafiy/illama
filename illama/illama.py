@@ -11,9 +11,13 @@ import uvicorn
 from exllamav2 import (
     ExLlamaV2,
     ExLlamaV2Cache,
+    ExLlamaV2CacheBase,
+    ExLlamaV2Tokenizer,
+    ExLlamaV2Config,
+    ExLlamaV2Cache_8bit,
+    ExLlamaV2Cache_Q4,
     ExLlamaV2Tokenizer
 )
-
 import asyncio
 import json
 
@@ -29,31 +33,33 @@ from illama.util import (
 class ILlamaServer:
 
 
-    def __init__(self, ip: str, port: int, model: ExLlamaV2, tokenizer: ExLlamaV2Tokenizer, cache: ExLlamaV2Cache, verbose: bool = False):
+    def __init__(self, ip: str, port: int, model_path: str, batch_size: int = 2, cache_quant: int = 16, verbose: bool = False):
         self.ip: str = ip
         self.port: int = port
-        self.model: ExLlamaV2 = model
-        self.tokenizer: ExLlamaV2Tokenizer = tokenizer
-        self.cache: ExLlamaV2Cache = cache
-        self.verbose = verbose
+        self.model_path: str = model_path
+        self.cache_quant: int = cache_quant
+        self.batch_size: int = batch_size
+        self.verbose: bool = verbose
+        
+        self.model: ExLlamaV2 = None
+        self.tokenizer: ExLlamaV2Tokenizer = None
+        self.cache: ExLlamaV2Cache = None
 
         self.chat_template: str = None
         self.chats_lock = asyncio.Lock()
         self.chat_queue: asyncio.Queue[Chat] = asyncio.Queue()
         self.active_chats: list[Chat] = []
         self.chat_template = None
-        self.zero_out_cache()
         
         
     def zero_out_cache(self):
         if self.cache:
             with torch.inference_mode():
                 for i in range(self.model.config.num_hidden_layers):
-                    k, v = self.cache.get_kv_state(i, 0, 0, 0)
-                    kv = k.narrow(1, 0, self.cache.max_seq_len).narrow(0, 0, self.cache.batch_size)
-                    vv = v.narrow(1, 0, self.cache.max_seq_len).narrow(0, 0, self.cache.batch_size)
-                    kv.copy_(torch.zeros_like(kv))
-                    vv.copy_(torch.zeros_like(vv))
+                    k, v = self.cache.get_kv_state(i, self.cache.batch_size, 0, self.cache.max_seq_len)
+                    k.narrow(1, 0, self.cache.max_seq_len).narrow(0, 0, self.cache.batch_size).fill_(0)
+                    v.narrow(1, 0, self.cache.max_seq_len).narrow(0, 0, self.cache.batch_size).fill_(0)
+                    self.cache.store_kv_state(i, self.cache.batch_size, 0, self.cache.max_seq_len)
         
         
     def add_routes(self):
@@ -187,10 +193,10 @@ class ILlamaServer:
             index = len(self.active_chats)
             self.active_chats.append(chat)
             # zero out cache row, might not be necessary
-            for layer in range(self.model.config.num_hidden_layers):
-                key_states, value_states = self.cache.get_kv_state(layer, self.cache.batch_size, 0, 0)
-                key_states.narrow(1, 0, self.cache.max_seq_len).narrow(0, index, 1).fill_(0.0)
-                value_states.narrow(1, 0, self.cache.max_seq_len).narrow(0, index, 1).fill_(0.0)
+            # for layer in range(self.model.config.num_hidden_layers):
+            #     key_states, value_states = self.cache.get_kv_state(layer, self.cache.batch_size, 0, 0)
+            #     key_states.narrow(1, 0, self.cache.max_seq_len).narrow(0, index, 1).fill_(0)
+            #     value_states.narrow(1, 0, self.cache.max_seq_len).narrow(0, index, 1).fill_(0)
 
     async def queue_chats(self):
         """
@@ -224,8 +230,13 @@ class ILlamaServer:
     async def preprocess(self, chat: Chat):
         chat_idx = self.active_chats.index(chat)
         # use temp cache to pre-process the initial sequence and obtain its kv outputs
-        temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-        
+        if self.cache_quant == 16:
+            temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+        elif self.cache_quant == 8:
+            temp_cache = ExLlamaV2Cache_8bit(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+        elif self.cache_quant == 4:
+            temp_cache = ExLlamaV2Cache_Q4(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+
         input_ids = chat.sequence_tokens.unsqueeze(0)
 
         self.model.forward(
@@ -255,16 +266,28 @@ class ILlamaServer:
         chat.preprocessed = True
         return temp_cache
 
-    def copy_cache(self, cache_from: ExLlamaV2Cache, cache_to: ExLlamaV2Cache, from_token, from_tokens, from_batch, from_batches, to_token, to_tokens, to_batch, to_batches):
+    def copy_cache(self,
+                   cache_from: ExLlamaV2CacheBase,
+                   cache_to: ExLlamaV2CacheBase,
+                   from_token,
+                   from_tokens, 
+                   from_batch,
+                   from_batches,
+                   to_token,
+                   to_tokens,
+                   to_batch, 
+                   to_batches
+                ):
         for layer in range(self.model.config.num_hidden_layers):
-            from_key_states, from_value_states = cache_from.get_kv_state(layer, from_batches, from_token, from_token + from_tokens)
-            to_key_states, to_value_states = cache_to.get_kv_state(layer, to_batches, to_token, to_token + to_tokens)
+            from_key_states, from_value_states = cache_from.get_kv_state(layer, cache_from.batch_size, from_token, from_tokens)
+            to_key_states, to_value_states = cache_to.get_kv_state(layer, cache_to.batch_size, to_token, to_tokens)
             from_key_view = from_key_states.narrow(1, from_token, from_tokens).narrow(0, from_batch, from_batches)
             from_value_view = from_value_states.narrow(1, from_token, from_tokens).narrow(0, from_batch, from_batches)
             to_key_view = to_key_states.narrow(1, to_token, to_tokens).narrow(0, to_batch, to_batches)
             to_value_view = to_value_states.narrow(1, to_token, to_tokens).narrow(0, to_batch, to_batches)
             to_key_view.copy_(from_key_view)
             to_value_view.copy_(from_value_view)
+            cache_to.store_kv_state(layer, cache_to.batch_size, to_token, to_tokens)
             
 
     async def batch_forward(self):
@@ -353,8 +376,15 @@ class ILlamaServer:
                             # shift active cache batches left
                             offset = old_seq_len - new_seq_len
                             for i, chat in enumerate(self.active_chats):
+                                
                                 # create temp cache to store current chat sequence cache
-                                temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+                                if self.cache_quant == 16:
+                                    temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+                                elif self.cache_quant == 8:
+                                    temp_cache = ExLlamaV2Cache_8bit(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+                                elif self.cache_quant == 4:
+                                    temp_cache = ExLlamaV2Cache_Q4(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
+                                
                                 # move chat cache from perm to temp
                                 chat_seq = chat.get_sequence_length()
                                 self.copy_cache(self.cache, temp_cache, offset, chat_seq, i, 1, 0, chat_seq, 0, 1)
@@ -379,6 +409,24 @@ class ILlamaServer:
 
     def serve(self):
         print(f" -- Starting OpenAI-compatible server on {self.ip} port {self.port}")
+
+        self.config = ExLlamaV2Config(model_dir=self.model_path)
+        self.config.prepare()
+        self.tokenizer = ExLlamaV2Tokenizer(self.config)
+        self.model = ExLlamaV2(self.config)
+        if self.cache_quant == 16:
+            self.cache = ExLlamaV2Cache(self.model, self.batch_size, lazy=True)
+        elif self.cache_quant == 8:
+            self.cache = ExLlamaV2Cache_8bit(self.model, self.batch_size, lazy=True)
+        elif self.cache_quant == 4:
+            self.cache = ExLlamaV2Cache_Q4(self.model, self.batch_size, lazy=True)
+        else:
+            print("Unsupported cache quant", self.cache_quant)
+            exit(0)
+
+        self.model.load_autosplit(self.cache)
+
+        self.zero_out_cache()
         self.app = FastAPI(on_startup=[self.on_startup])
         self.add_routes()
         uvicorn.run(self.app, host=self.ip, port=self.port)
