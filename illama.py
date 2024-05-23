@@ -1,6 +1,7 @@
 from functools import lru_cache
 import time
 import traceback
+from typing import Union
 
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
@@ -29,12 +30,13 @@ from exllamav2.server.openai.util import (
 class ILlamaServer:
 
 
-    def __init__(self, ip: str, port: int, model: ExLlamaV2, tokenizer: ExLlamaV2Tokenizer, cache: ExLlamaV2Cache):
+    def __init__(self, ip: str, port: int, model: ExLlamaV2, tokenizer: ExLlamaV2Tokenizer, cache: ExLlamaV2Cache, verbose: bool = False):
         self.ip: str = ip
         self.port: int = port
         self.model: ExLlamaV2 = model
         self.tokenizer: ExLlamaV2Tokenizer = tokenizer
         self.cache: ExLlamaV2Cache = cache
+        self.verbose = verbose
 
         self.chat_template: str = None
         self.chats_lock = asyncio.Lock()
@@ -66,6 +68,9 @@ class ILlamaServer:
             self.handle_models,
             methods=["GET"]
         )
+        if self.verbose:
+            print("Listening on /v1/chat/completions")
+            print("Listening on /v1/models")
         
         
     def count_active_chats(self) -> int:
@@ -75,27 +80,42 @@ class ILlamaServer:
     async def token_stream(self, chat: Chat, request: Request):
         handled = False
         try:
+            first_sent = False
             while not chat.is_finished():
-                delta = await chat.get_delta()
-                if len(delta) > 0:
-                    chunk = ChatCompletionChunk(chat)
-                    json_data = chunk.json()
-                    await chat.clear_delta()
-                    yield f"data: {json.dumps(json_data)}\n\n"
-                elif chat.finish_reason:
-                    break
-                await asyncio.sleep(0.1)
+                if not first_sent:
+                    first_sent = True
+                    first_chunk = ChatCompletionChunk(chat)
+                    first_json = first_chunk.json(first_chunk=True)
+                    yield f"data: {json.dumps(first_json)}\n\n"
+                else:
+                    delta = await chat.get_delta()
+                    if len(delta) > 0:
+                        chunk = ChatCompletionChunk(chat)
+                        json_data = chunk.json()
+                        await chat.clear_delta()
+                        yield f"data: {json.dumps(json_data)}\n\n"
+                    elif chat.is_finished():
+                        break
+                await asyncio.sleep(0.05)
+            if await chat.get_delta():
+                last_chunk = ChatCompletionChunk(chat)
+                last_json = last_chunk.json()
+                await chat.clear_delta()
+                yield f"data: {json.dumps(last_json)}\n\n"
             final_chunk = ChatCompletionChunk(chat)
-            json_data = final_chunk.json(usage=True)
+            json_data = final_chunk.json(usage=True, final_chunk=True)
             yield f"data: {json.dumps(json_data)}\n\n"
             handled = True
+            chat.print_stats()
         except asyncio.CancelledError:
             await chat.signal_stop(ChatStatus.COMPLETED, "stop")
+            chat.print_stats()
             handled = True
             return
         finally:
             if not handled:
                 await chat.signal_stop(ChatStatus.STOPPED, "stop")
+                chat.print_stats()
         
         
     async def handle_chat_completions(self, request: Request, chat_request: ChatCompletionsRequest):
@@ -106,9 +126,9 @@ class ILlamaServer:
                 return StreamingResponse(self.token_stream(chat, request), media_type="text/event-stream")
             else:
                 while not chat.is_finished():
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
+                chat.print_stats()
             return ChatCompletion(chat)
-        
         except Exception as e:
             traceback.print_exc(limit=5)
         
@@ -128,7 +148,7 @@ class ILlamaServer:
 
 
     @lru_cache
-    def get_chat_template(self):
+    def get_chat_template(self) -> str:
         """
         Retrieves the chat template.
 
@@ -156,8 +176,8 @@ class ILlamaServer:
             'eos_token': self.tokenizer.eos_token,
             'add_generation_prompt': True
         })
-        
-        print(chat.id, prompt)
+        if self.verbose:
+            print(chat.id, prompt)
         
         sequence_tokens = self.tokenizer.encode(prompt).to('cuda').squeeze()
         chat.set_sequence_tokens(sequence_tokens)
@@ -334,7 +354,7 @@ class ILlamaServer:
                 async with self.chats_lock:  # chats need to be locked for this operation
                     go_to_start = False
                     for chat in self.active_chats:
-                        if chat.is_finished():
+                        if chat.is_finished() and chat in self.active_chats:
                             remove_chats.append(chat)
                             break
 
@@ -346,6 +366,7 @@ class ILlamaServer:
                         for remove_chat in remove_chats:
                             index = self.active_chats.index(remove_chat)
                             del self.active_chats[index]
+                        remove_chats.clear()
                         go_to_start = True
 
                     if go_to_start:
