@@ -44,3 +44,7 @@ To start the server run this command and specify the path to your model.
 ```bash
 python server.py --model-path "<path>"
 ```
+
+## TODO
+
+- Implement [**FlashAttention 2**](https://github.com/Dao-AILab/flash-attention)
