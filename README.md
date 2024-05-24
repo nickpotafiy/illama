@@ -37,3 +37,10 @@ pip3 install -r requirements.txt
 
 This will install [ExLlamaV2](https://github.com/turboderp/exllamav2) and the required libraries.
 
+## Running the Server
+
+To start the server run this command and specify the path to your model.
+
+```bash
+python server.py --model-path "<path>"
+```
