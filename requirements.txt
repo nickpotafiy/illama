@@ -1,3 +1,4 @@
 git+https://github.com/nickpotafiy/exllamav2.git
 tokenizers
 fastapi
+flash-attn
