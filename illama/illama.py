@@ -1,6 +1,9 @@
 from functools import lru_cache
+import signal
+import threading
 import time
 import traceback
+from typing import Dict
 
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
@@ -8,18 +11,21 @@ from jinja2 import Template
 
 import torch
 import uvicorn
+
 from exllamav2 import (
     ExLlamaV2,
     ExLlamaV2Cache,
-    ExLlamaV2CacheBase,
     ExLlamaV2Tokenizer,
     ExLlamaV2Config,
-    ExLlamaV2Cache_8bit,
-    ExLlamaV2Cache_Q4,
     ExLlamaV2Tokenizer
 )
 import asyncio
 import json
+
+from exllamav2.compat import safe_move_tensor
+from exllamav2.generator.dynamic import ExLlamaV2DynamicGenerator, ExLlamaV2DynamicJob
+from exllamav2.generator.sampler import ExLlamaV2Sampler
+from exllamav2.model import _torch_device
 
 from illama.util import (
     Chat,
@@ -33,11 +39,10 @@ from illama.util import (
 class ILlamaServer:
 
 
-    def __init__(self, ip: str, port: int, model_path: str, batch_size: int = 2, cache_quant: int = 16, verbose: bool = False):
+    def __init__(self, ip: str, port: int, model_path: str, batch_size: int = 2, verbose: bool = False):
         self.ip: str = ip
         self.port: int = port
         self.model_path: str = model_path
-        self.cache_quant: int = cache_quant
         self.batch_size: int = batch_size
         self.verbose: bool = verbose
         
@@ -48,18 +53,9 @@ class ILlamaServer:
         self.chat_template: str = None
         self.chats_lock = asyncio.Lock()
         self.chat_queue: asyncio.Queue[Chat] = asyncio.Queue()
-        self.active_chats: list[Chat] = []
+        self.active_chats: Dict[int, Chat] = {}
         self.chat_template = None
-        
-        
-    def zero_out_cache(self):
-        if self.cache:
-            with torch.inference_mode():
-                for i in range(self.model.config.num_hidden_layers):
-                    k, v = self.cache.get_kv_state(i, self.cache.batch_size, 0, self.cache.max_seq_len)
-                    k.narrow(1, 0, self.cache.max_seq_len).narrow(0, 0, self.cache.batch_size).fill_(0)
-                    v.narrow(1, 0, self.cache.max_seq_len).narrow(0, 0, self.cache.batch_size).fill_(0)
-                    self.cache.store_kv_state(i, self.cache.batch_size, 0, self.cache.max_seq_len)
+        self.abort_event = threading.Event()
         
         
     def add_routes(self):
@@ -79,7 +75,7 @@ class ILlamaServer:
         
         
     def count_active_chats(self) -> int:
-        return len(self.active_chats)
+        return len([v for k, v in self.active_chats.items() if v is not None and v.is_finished() is False])
         
         
     async def token_stream(self, chat: Chat, request: Request):
@@ -115,14 +111,14 @@ class ILlamaServer:
         except asyncio.CancelledError:
             async with self.chats_lock:
                 await chat.signal_stop(ChatStatus.COMPLETED, "stop")
-                chat.print_stats()
+            chat.print_stats()
             handled = True
             return
         finally:
             if not handled:
                 async with self.chats_lock:
                     await chat.signal_stop(ChatStatus.STOPPED, "stop")
-                    chat.print_stats()
+                chat.print_stats()
         
         
     async def handle_chat_completions(self, request: Request, chat_request: ChatCompletionsRequest):
@@ -170,7 +166,26 @@ class ILlamaServer:
         return self.chat_template
 
 
+    @lru_cache
+    def get_eos_token_ids(self) -> list[int]:
+        eos_tokens = set()
+        gen_eos_tids = self.tokenizer.config.generation_config.get('eos_token_id', None)
+        
+        if isinstance(gen_eos_tids, int):
+            eos_tokens.add(gen_eos_tids)
+            
+        if isinstance(gen_eos_tids, list):
+            for token_id in gen_eos_tids:
+                eos_tokens.add(token_id)
+        
+        if self.tokenizer.eos_token_id:
+            eos_tokens.add(self.tokenizer.eos_token_id)
+
+        return list(eos_tokens)
+
+
     async def add_chat(self, chat: Chat):
+        assert self.count_active_chats() < self.batch_size, "Batch size is at maximum"
         messages = chat.request.messages
         chat_template = self.get_chat_template()
         if not chat_template:
@@ -186,28 +201,25 @@ class ILlamaServer:
         if self.verbose:
             print(chat.id, prompt)
         
-        sequence_tokens = self.tokenizer.encode(prompt).to('cuda').squeeze()
+        sequence_tokens = self.tokenizer.encode(prompt).squeeze()
         chat.set_sequence_tokens(sequence_tokens)
 
         async with self.chats_lock:
-            index = len(self.active_chats)
-            self.active_chats.append(chat)
-            # zero out cache row, might not be necessary
-            # for layer in range(self.model.config.num_hidden_layers):
-            #     key_states, value_states = self.cache.get_kv_state(layer, self.cache.batch_size, 0, 0)
-            #     key_states.narrow(1, 0, self.cache.max_seq_len).narrow(0, index, 1).fill_(0)
-            #     value_states.narrow(1, 0, self.cache.max_seq_len).narrow(0, index, 1).fill_(0)
+            for i in range(self.batch_size):
+                if not i in self.active_chats or self.active_chats[i] is None or self.active_chats[i].is_finished():
+                    self.active_chats[i] = chat
+                    break
 
     async def queue_chats(self):
         """
-            Grab chats from queue and add them to active chats for processing if conditions are met.
+            Grab chats from queue and add to active batch when available.
         """
         with torch.inference_mode():
             while True:
                 async with self.chats_lock:
                     num_active_chats = self.count_active_chats()
                 
-                if num_active_chats >= self.cache.batch_size:
+                if num_active_chats >= self.batch_size:
                     #  Too many active chats, sleep
                     await asyncio.sleep(0.5)
                     continue
@@ -215,218 +227,108 @@ class ILlamaServer:
                 try:
                     new_chat = await self.chat_queue.get()
                     await self.add_chat(new_chat)
+                    
+                    gen_settings = ExLlamaV2Sampler.Settings()
 
+                    if new_chat.request.top_p is not None:
+                        gen_settings.top_p = new_chat.request.top_p
+
+                    if new_chat.request.temperature is not None:
+                        gen_settings.temperature = new_chat.request.temperature
+
+                    if new_chat.request.top_k is not None:
+                        gen_settings.top_k = new_chat.request.top_k
+
+                    if new_chat.request.frequency_penalty is not None:
+                        gen_settings.token_frequency_penalty = new_chat.request.frequency_penalty
+                        
+                    if new_chat.request.presence_penalty is not None:
+                        gen_settings.token_presence_penalty = new_chat.request.presence_penalty
+                    
+                    job = ExLlamaV2DynamicJob(
+                        input_ids = new_chat.sequence_tokens.unsqueeze(0),
+                        max_new_tokens = 2048,
+                        stop_conditions = self.get_eos_token_ids(),
+                        gen_settings = gen_settings,
+                    )
+                    
+                    new_chat.job = job
+                    self.generator.enqueue(job)
+                    
                 except Exception:
                     traceback.print_exc(limit=5)
-    
-    
-    def get_max_seq_length(self) -> int:
-        return max([len(x.sequence_tokens) for x in self.active_chats] + [0])
-    
-    def get_max_seq_length_except(self, exclude_chat: Chat) -> int:
-        return max([len(x.sequence_tokens) for x in self.active_chats if x is not exclude_chat] + [0])
-        
-
-    async def preprocess(self, chat: Chat):
-        chat_idx = self.active_chats.index(chat)
-        # use temp cache to pre-process the initial sequence and obtain its kv outputs
-        if self.cache_quant == 16:
-            temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-        elif self.cache_quant == 8:
-            temp_cache = ExLlamaV2Cache_8bit(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-        elif self.cache_quant == 4:
-            temp_cache = ExLlamaV2Cache_Q4(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-
-        input_ids = chat.sequence_tokens.unsqueeze(0)
-
-        self.model.forward(
-            input_ids=input_ids,
-            cache=temp_cache,
-            last_id_only=False,
-            preprocess_only=True,
-            abort_event=chat._abort
-        )
-        
-        chat.prompt_tokens = chat.get_sequence_length()
-        max_length = self.get_max_seq_length()
-        cache_seq_len = self.cache.current_seq_len
-        
-        if cache_seq_len > 0 and cache_seq_len < max_length:
-            cache_offset = max_length - cache_seq_len
-            # shift active chats cache right
-            self.copy_cache(self.cache, self.cache, 0, self.cache.current_seq_len, 0, len(self.active_chats), cache_offset, self.cache.current_seq_len, 0, len(self.active_chats))
-
-        #  copy temp cache to perm cache ensuring end-alignment of last token with rest of batch
-        kv_chat_offset = max_length - chat.get_sequence_length()
-        
-        self.copy_cache(temp_cache, self.cache, 0, temp_cache.current_seq_len, 0, 1, kv_chat_offset, temp_cache.current_seq_len, chat_idx, 1)
-        
-        if temp_cache.current_seq_len > self.cache.current_seq_len:
-            self.cache.current_seq_len = temp_cache.current_seq_len
-        chat.preprocessed = True
-        return temp_cache
-
-    def copy_cache(self,
-                   cache_from: ExLlamaV2CacheBase,
-                   cache_to: ExLlamaV2CacheBase,
-                   from_token,
-                   from_tokens, 
-                   from_batch,
-                   from_batches,
-                   to_token,
-                   to_tokens,
-                   to_batch, 
-                   to_batches
-                ):
-        for layer in range(self.model.config.num_hidden_layers):
-            from_key_states, from_value_states = cache_from.get_kv_state(layer, cache_from.batch_size, from_token, from_tokens)
-            to_key_states, to_value_states = cache_to.get_kv_state(layer, cache_to.batch_size, to_token, to_tokens)
-            from_key_view = from_key_states.narrow(1, from_token, from_tokens).narrow(0, from_batch, from_batches)
-            from_value_view = from_value_states.narrow(1, from_token, from_tokens).narrow(0, from_batch, from_batches)
-            to_key_view = to_key_states.narrow(1, to_token, to_tokens).narrow(0, to_batch, to_batches)
-            to_value_view = to_value_states.narrow(1, to_token, to_tokens).narrow(0, to_batch, to_batches)
-            to_key_view.copy_(from_key_view)
-            to_value_view.copy_(from_value_view)
-            cache_to.store_kv_state(layer, cache_to.batch_size, to_token, to_tokens)
-            
-
-    async def batch_forward(self):
-        max_length = self.get_max_seq_length()    
-                        
-        last_tokens = []
-        attn_masks = []
-        pos_offsets = []
-        
-        for i, chat in enumerate(self.active_chats):
-            last_tokens.append(chat.sequence_tokens[-1].unsqueeze(0))
-            mask = torch.full((max_length,), float('0.0'), dtype=torch.float16)
-            mask[:max_length - chat.get_sequence_length()] = float('-inf')
-            attn_masks.append(mask)
-            offset = 0 - (max_length - chat.get_sequence_length())
-            pos_offsets.append(torch.IntTensor([offset]))
-        
-        input_ids = torch.stack(last_tokens)
-        attention_mask = torch.stack(attn_masks)        
-        position_offsets = torch.stack(pos_offsets)
-
-        outputs = self.model.forward(
-            input_ids=input_ids,
-            input_mask=attention_mask,
-            cache=self.cache,
-            last_id_only=True,
-            position_offsets=position_offsets
-        )
-
-        remove_chats = []
-        for batch, output in enumerate(outputs):
-            chat = self.active_chats[batch]
-            last_token_logits = output[0]
-            finished = await chat.sample_next_token(last_token_logits, self.tokenizer, self.model)
-            if finished:
-                remove_chats.append(chat)
-        return remove_chats
 
 
     async def process_chats(self):
-        with torch.inference_mode():
-            remove_chats = []
-            while True:
-                await asyncio.sleep(0.01)
-                no_chats = False                
-                async with self.chats_lock:
-                    if self.count_active_chats() == 0:
-                        no_chats = True
-                if no_chats:
-                    await asyncio.sleep(0.5)
-                    continue
-                
-                async with self.chats_lock:  # chats need to be locked for this operation
-                    go_to_start = False
-                    for chat in self.active_chats:
-                        if chat.is_finished() and chat in self.active_chats and not chat in remove_chats:
-                            remove_chats.append(chat)
-                            break
-                        if chat and not chat.preprocessed:
-                            await self.preprocess(chat)                            
-                            go_to_start = True
-                        continue
-                    if len(remove_chats) > 0:
-                        active_chats = self.count_active_chats()
-                        old_seq_len = self.get_max_seq_length()
-                        for remove_chat in remove_chats:
-                            active_chats = self.count_active_chats()
-                            chat_idx = self.active_chats.index(remove_chat)
-                            # if there's multiple active chats, we need to possibly shift cache
-                            if active_chats > 1:
-                                # check if the current chat is the last active one
-                                last_chat_index = len(self.active_chats) - 1
-                                last_active_chat = self.active_chats[last_chat_index]
-                                if not last_active_chat == remove_chat:
-                                    # swap last chat with current one
-                                    self.active_chats[chat_idx] = last_active_chat
-                                    del self.active_chats[last_chat_index] # remove the last chat
-                                    # shift the last chat's cache to the current one
-                                    self.copy_cache(self.cache, self.cache, 0, old_seq_len, last_chat_index, 1, 0, old_seq_len, chat_idx, 1)
-                                else:
-                                    del self.active_chats[chat_idx]
-                            else:
-                                del self.active_chats[chat_idx]
-                        new_seq_len = self.get_max_seq_length()
-                        if old_seq_len > new_seq_len:
-                            # shift active cache batches left
-                            offset = old_seq_len - new_seq_len
-                            for i, chat in enumerate(self.active_chats):
-                                
-                                # create temp cache to store current chat sequence cache
-                                if self.cache_quant == 16:
-                                    temp_cache = ExLlamaV2Cache(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-                                elif self.cache_quant == 8:
-                                    temp_cache = ExLlamaV2Cache_8bit(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-                                elif self.cache_quant == 4:
-                                    temp_cache = ExLlamaV2Cache_Q4(self.model, batch_size=1, max_seq_len=chat.get_sequence_length())
-                                
-                                # move chat cache from perm to temp
-                                chat_seq = chat.get_sequence_length()
-                                self.copy_cache(self.cache, temp_cache, offset, chat_seq, i, 1, 0, chat_seq, 0, 1)
-                                # move from temp back to perm, remapping to beginning
-                                self.copy_cache(temp_cache, self.cache, 0, chat_seq, 0, 1, 0, chat_seq, i, 1)
-                                
-                        self.cache.current_seq_len = new_seq_len
-                        remove_chats.clear()
-                        go_to_start = True
-                        
-                    if go_to_start:
-                        continue
-                    
-                    chats_to_remove = await self.batch_forward()
-                    if len(chats_to_remove) > 0:
-                        for remove in chats_to_remove:
-                            remove_chats.append(remove)
-                    
+        while self.abort_event is None or not self.abort_event.is_set():
+            await asyncio.sleep(0.5)
+            while self.generator.num_remaining_jobs():
+                if self.abort_event is not None and self.abort_event.is_set():
+                    break
+                results = self.generator.iterate()
+                for result in results:
+                    job = result["job"]
+                    async with self.chats_lock:
+                        finished_chats = []
+                        for i, chat in self.active_chats.items():
+                            if chat is None or chat.is_finished(): continue
+                            if chat.job == job:
+                                if 'eos' in result and result['eos'] is True:
+                                    eos_reason = result['eos_reason']
+                                    finish_reason = "stop"
+                                    chat_status = ChatStatus.COMPLETED
+                                    if eos_reason == "max_new_tokens":
+                                        finish_reason = "length"
+                                        chat_status = ChatStatus.STOPPED
+                                    await chat.signal_stop(chat_status, finish_reason)
+                                    finished_chats.append(i)
+                                if 'text' in result:
+                                    await chat.add_delta(result['text'])
+                                    await asyncio.sleep(0.01)
+                        if len(finished_chats) > 0:
+                            for i in finished_chats:
+                                self.active_chats[i] = None
+
+
     def on_startup(self):
         asyncio.get_event_loop().create_task(self.queue_chats())
         asyncio.get_event_loop().create_task(self.process_chats())
 
-    def serve(self):
-        print(f" -- Starting OpenAI-compatible server on {self.ip} port {self.port}")
 
+    def load(self):
+        
+        max_chunk_size = 512
+        total_context = max_chunk_size * 16 + (self.batch_size * max_chunk_size * 2)
+        
         self.config = ExLlamaV2Config(model_dir=self.model_path)
+        self.config.max_input_len = max_chunk_size
+        self.config.max_attention_size = max_chunk_size ** 2
         self.config.prepare()
         self.tokenizer = ExLlamaV2Tokenizer(self.config)
         self.model = ExLlamaV2(self.config)
-        if self.cache_quant == 16:
-            self.cache = ExLlamaV2Cache(self.model, self.batch_size, lazy=True)
-        elif self.cache_quant == 8:
-            self.cache = ExLlamaV2Cache_8bit(self.model, self.batch_size, lazy=True)
-        elif self.cache_quant == 4:
-            self.cache = ExLlamaV2Cache_Q4(self.model, self.batch_size, lazy=True)
-        else:
-            print("Unsupported cache quant", self.cache_quant)
-            exit(0)
+        self.cache = ExLlamaV2Cache(self.model, max_seq_len=total_context, lazy=True)
+        self.model.load_autosplit(cache=self.cache, progress=True)
+        
+        self.generator = ExLlamaV2DynamicGenerator(
+            model = self.model,
+            cache = self.cache,
+            tokenizer = self.tokenizer,
+            max_batch_size = self.batch_size,
+            max_chunk_size = max_chunk_size,
+            paged = True
+        )
+        
+        self.generator.warmup()
 
-        self.model.load_autosplit(self.cache)
+        
+    def handle_interrupt(self, signum, frame):
+        self.abort_event.set()
 
-        self.zero_out_cache()
+
+    def serve(self):
+        print(f" -- Starting OpenAI-compatible server on {self.ip} port {self.port}")
+        signal.signal(signal.SIGINT, self.handle_interrupt)
+        self.load()
         self.app = FastAPI(on_startup=[self.on_startup])
         self.add_routes()
         uvicorn.run(self.app, host=self.ip, port=self.port)

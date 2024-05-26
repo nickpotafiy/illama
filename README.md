@@ -1,13 +1,12 @@
-# iLlama
-**iLlama** is a fast inference server for running Llama and ExLlamav2 based large language models (LLMs). The main feature of iLlama (and the reason it was made) is parallel processing of requests to output tokens for multiple users at once.
+# illama
+**illama** is a lightweight, fast inference server for Llama and ExLlamav2 based large language models (LLMs).
 
 ## Features
-- Dynamic batching - Handles multiple completion requests simultaneously.
-- Open-AI compatible server - Use official API clients to connect to the server.
-- Load any ExLlamaV2 compatible models (GPTQ, EXL2, or SafeTensors).
-- Quantization support with GPTQ and EXL2.
-- iLlama uses ExLlamaV2's blazing fast library internally.
-- Nvidia GPU focused - Distribute model across any number of local GPUs.
+- **Continuous batching** - Handles multiple requests simultaneously.
+- **Open-AI compatible server** - Use official OpenAI API clients
+- **Quantization Support** - Load any quantized ExLlamaV2 compatible models (GPTQ, EXL2, or SafeTensors).
+- **GPU Focused** - Distribute model across any number of local GPUs.
+- Uses [FlashAttention 2](https://github.com/Dao-AILab/flash-attention) with Paged Attention by default
 
 ## Installation
 
@@ -39,12 +38,8 @@ This will install [ExLlamaV2](https://github.com/turboderp/exllamav2) and the re
 
 ## Running the Server
 
-To start the server run this command and specify the path to your model.
+To start illama run this command:
 
 ```bash
-python server.py --model-path "<path>"
+python server.py --model-path "<path>" --batch-size 10 --host "0.0.0.0" --port 5000 --verbose
 ```
-
-## TODO
-
-- Implement [**FlashAttention 2**](https://github.com/Dao-AILab/flash-attention)
