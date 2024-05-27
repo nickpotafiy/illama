@@ -72,6 +72,7 @@ class IllamaServer:
         if self.verbose:
             print("Listening on /v1/chat/completions")
             print("Listening on /v1/models")
+            print("Listening on /v1/embeddings")
 
     def count_active_tasks(self) -> int:
         return len(
