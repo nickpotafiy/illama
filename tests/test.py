@@ -97,6 +97,13 @@ class Tests(unittest.TestCase):
             "tuesday" in content.lower()
         ), f"Could not find expected string 'tuesday' in '{content}'"
 
+    def test_embeddings_request(self):
+        embeddings = self.client.embeddings.create(
+            model=self.test_model, input="monday"
+        )
+        embeddings = embeddings.data[0].embedding
+        self.assertEqual(len(embeddings), 4096)
+
 
 if __name__ == "__main__":
     unittest.main()

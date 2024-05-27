@@ -176,18 +176,39 @@ class EmbeddingsRequest(BaseModel):
     model: str
 
 
+class EmbeddingsTask(Task):
+
+    def __init__(self, request: EmbeddingsRequest):
+        super().__init__()
+        self.request: EmbeddingsRequest = request
+        self.hidden_state: torch.Tensor = None
+
+
 class EmbeddingsResponse:
 
     object: str = "embedding"
 
-    def json():
-        return {"object": "embedding", "embedding": [], "index": 0}
+    def __init__(self, task: EmbeddingsTask, request: EmbeddingsRequest):
+        self.task: EmbeddingsTask = task
+        self.request: EmbeddingsRequest = request
 
-
-class EmbeddingsTask(Task):
-
-    def __init__():
-        super().__init__()
-
-    def __call__(self, request: EmbeddingsRequest):
-        self.request = request
+    def json(self):
+        return {
+            "object": "list",
+            "data": [
+                {
+                    "object": "embedding",
+                    "embedding": (
+                        []
+                        if self.task.hidden_state is None
+                        else self.task.hidden_state.tolist()
+                    ),
+                    "index": 0,
+                }
+            ],
+            "model": self.request.model,
+            "usage": {
+                "prompt_tokens": 0,
+                "total_tokens": 0,
+            }
+        }

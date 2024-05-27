@@ -144,7 +144,9 @@ class IllamaServer:
     async def handle_embeddings(self, request: EmbeddingsRequest):
         task = EmbeddingsTask(request)
         await self.add_and_wait(task)
-        return EmbeddingsResponse(task)
+        response = EmbeddingsResponse(task, request)
+        json = response.json()
+        return json
 
     async def handle_chat_completions(self, request: ChatCompletionsRequest):
         task = ChatCompletionsTask(request)
@@ -277,6 +279,17 @@ class IllamaServer:
                         task.job = job
                         self.generator.enqueue(job)
 
+                    elif isinstance(task, EmbeddingsTask):
+                        gen_settings = ExLlamaV2Sampler.Settings()
+                        input_ids = self.tokenizer.encode(task.request.input)
+                        job = ExLlamaV2DynamicJob(
+                            input_ids=input_ids,
+                            max_new_tokens=0,
+                            gen_settings=gen_settings,
+                            return_hidden_state=True,
+                        )
+                        task.job = job
+                        self.generator.enqueue(job)
                     else:
                         print("Unhandled task:", type(task))
                         continue
@@ -312,22 +325,39 @@ class IllamaServer:
                     job = result["job"]
                     async with self.tasks_lock:
                         finished_chats = []
-                        for i, chat in self.active_tasks.items():
-                            if chat is None or chat.is_finished():
+                        for i, task in self.active_tasks.items():
+                            if task is None or task.is_finished():
                                 continue
-                            if chat.job == job:
-                                if "eos" in result and result["eos"] is True:
-                                    eos_reason = result["eos_reason"]
-                                    finish_reason = "stop"
-                                    chat_status = TaskStatus.COMPLETED
-                                    if eos_reason == "max_new_tokens":
-                                        finish_reason = "length"
-                                        chat_status = TaskStatus.STOPPED
-                                    await chat.signal_stop(chat_status, finish_reason)
-                                    finished_chats.append(i)
-                                if "text" in result:
-                                    await chat.add_delta(result["text"])
-                                    await asyncio.sleep(0.01)
+                            if task.job == job:
+                                if isinstance(task, ChatCompletionsTask):
+                                    if "eos" in result and result["eos"] is True:
+                                        eos_reason = result["eos_reason"]
+                                        finish_reason = "stop"
+                                        chat_status = TaskStatus.COMPLETED
+                                        if eos_reason == "max_new_tokens":
+                                            finish_reason = "length"
+                                            chat_status = TaskStatus.STOPPED
+                                        await task.signal_stop(
+                                            chat_status, finish_reason
+                                        )
+                                        finished_chats.append(i)
+                                    if "text" in result:
+                                        await task.add_delta(result["text"])
+                                        await asyncio.sleep(0.01)
+                                elif isinstance(task, EmbeddingsTask):
+                                    if "eos" in result and result["eos"] is True:
+                                        if "hidden_state" in result:
+                                            task.hidden_state = result[
+                                                "hidden_state"
+                                            ].squeeze()
+                                        finish_reason = "stop"
+                                        chat_status = TaskStatus.COMPLETED
+                                        task.set_status(chat_status)
+                                        finished_chats.append(i)
+                                        await asyncio.sleep(0.01)
+                                else:
+                                    print("Unhandled task type:", type(task))
+                                    continue
                         if len(finished_chats) > 0:
                             for i in finished_chats:
                                 self.active_tasks[i] = None
