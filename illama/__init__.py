@@ -1,4 +1,4 @@
-from illama.util import (Chat, ChatCompletion, ChatCompletionChunk,
-                         ChatCompletionsRequest, ChatObject, ChatStatus,
-                         ChatFinishReason)
-from illama.illama import ILlamaServer
+from .oai import (ChatCompletionsTask, ChatCompletionResponse, ChatCompletionChunk,
+                         ChatCompletionsRequest, ChatObject, FinishReason)
+from .task import Task, TaskStatus
+from .illama import IllamaServer

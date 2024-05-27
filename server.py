@@ -1,4 +1,4 @@
-from illama import ILlamaServer
+from illama import IllamaServer
 import argparse
 
 parser = argparse.ArgumentParser()
@@ -16,5 +16,5 @@ model_path = args.model_path
 batch_size = args.batch_size
 verbose = args.verbose
 
-server = ILlamaServer(host, port, model_path, batch_size, verbose)
+server = IllamaServer(host, port, model_path, batch_size, verbose)
 server.serve()
