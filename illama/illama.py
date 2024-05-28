@@ -32,19 +32,33 @@ from illama.oai import (
 
 
 class IllamaServer:
+    """
+    Initialize Illama server
 
+    Args:
+        ip (str): The IP address of the server.
+        port (int): The port number of the server.
+        model_path (str): The path to the model to serve.
+        batch_size (int, optional): The batch size for processing tasks. Defaults to 5.
+        max_chunk_size (int, optional): Maximum number of tokens to process in parallel during prefill (prompt ingestion). Should not
+            exceed the model's max_input_len but can be lowered to trade off prompt speed for a shorter
+            interruption to ongoing jobs when a new job is started. Defaults to 256.
+        verbose (bool, optional): Whether to print verbose output. Defaults to False.
+    """
     def __init__(
         self,
         ip: str,
         port: int,
         model_path: str,
-        batch_size: int = 2,
+        batch_size: int = 5,
+        max_chunk_size: int = 256,
         verbose: bool = False,
     ):
         self.ip: str = ip
         self.port: int = port
         self.model_path: str = model_path
         self.batch_size: int = batch_size
+        self.max_chunk_size = max_chunk_size
         self.verbose: bool = verbose
 
         self.model: ExLlamaV2 = None
@@ -369,8 +383,8 @@ class IllamaServer:
 
     def load(self):
 
-        max_chunk_size = 512
-        total_context = max_chunk_size * 16 + (self.batch_size * max_chunk_size * 2)
+        max_chunk_size = self.max_chunk_size
+        total_context = max_chunk_size * 16 + (self.batch_size * max_chunk_size * 8)
 
         self.config = ExLlamaV2Config(model_dir=self.model_path)
         self.config.max_input_len = max_chunk_size
