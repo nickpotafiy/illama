@@ -193,16 +193,21 @@ class EmbeddingsResponse:
         self.request: EmbeddingsRequest = request
 
     def json(self):
+        hidden_state = self.task.hidden_state
+        if hidden_state is None:
+            hidden_state = []
+        else:
+            first = hidden_state[0]
+            if isinstance(first, list):
+                hidden_state = hidden_state[-1].tolist()
+            else:
+                hidden_state = hidden_state.tolist()
         return {
             "object": "list",
             "data": [
                 {
                     "object": "embedding",
-                    "embedding": (
-                        []
-                        if self.task.hidden_state is None
-                        else self.task.hidden_state.tolist()
-                    ),
+                    "embedding": hidden_state,
                     "index": 0,
                 }
             ],
