@@ -21,7 +21,7 @@ class Tests(unittest.TestCase):
         self.client = OpenAI(api_key="no_api_key")
         self.client.base_url = f"http://{self.test_host}:{self.test_port}/v1"
         self.server = IllamaServer(
-            self.test_host, self.test_port, self.test_model, 2, verbose=False
+            self.test_host, self.test_port, self.test_model, 5, verbose=False
         )
         self.server_thread = threading.Thread(target=self.server.serve, daemon=True)
         self.server_thread.start()
@@ -98,18 +98,30 @@ class Tests(unittest.TestCase):
         ), f"Could not find expected string 'tuesday' in '{content}'"
 
     def test_single_embedding_request(self):
-        embeddings = self.client.embeddings.create(
+        response = self.client.embeddings.create(
             model=self.test_model, input="monday"
         )
-        embeddings = embeddings.data[0].embedding
-        self.assertEqual(len(embeddings), 4096)
+        self.assertEqual(len(response.data), 1)
+        
+        embedding = response.data[0].embedding
+        self.assertEqual(len(embedding), 4096)
 
-    def test_multi_embedding_request(self):
-        embeddings = self.client.embeddings.create(
+        response = self.client.embeddings.create(
             model=self.test_model, input="monday tuesday wednesday"
         )
-        embeddings = embeddings.data[0].embedding
-        self.assertEqual(len(embeddings), 4096)
+        self.assertEqual(len(response.data), 1)
+        
+        embedding = response.data[0].embedding
+        self.assertEqual(len(embedding), 4096)
+
+    def test_multi_embedding_request(self):
+        response = self.client.embeddings.create(
+            model=self.test_model, input=["monday tuesday", "wednesday", "thrusday friday"]
+        )
+        self.assertEqual(len(response.data), 3)
+        for _embedding in response.data:
+            embedding = _embedding.embedding
+            self.assertEqual(len(embedding), 4096)
 
 if __name__ == "__main__":
     unittest.main()

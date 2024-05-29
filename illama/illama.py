@@ -45,6 +45,7 @@ class IllamaServer:
             interruption to ongoing jobs when a new job is started. Defaults to 256.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
     """
+
     def __init__(
         self,
         ip: str,
@@ -118,12 +119,15 @@ class IllamaServer:
                         yield f"data: {json.dumps(json_data)}\n\n"
                     elif task.is_finished():
                         break
+
                 await asyncio.sleep(0.05)
+
             if await task.get_delta():
                 last_chunk = ChatCompletionChunk(task)
                 last_json = last_chunk.json()
                 await task.clear_delta()
                 yield f"data: {json.dumps(last_json)}\n\n"
+
             final_chunk = ChatCompletionChunk(task)
             json_data = final_chunk.json(usage=True, final_chunk=True)
             yield f"data: {json.dumps(json_data)}\n\n"
@@ -177,11 +181,16 @@ class IllamaServer:
         return response.json(usage=True)
 
     async def handle_models(self) -> dict:
+        if '\\' in self.model.config.model_dir:
+            split = '\\'
+        else:
+            split = '/'
+        model_name = self.model.config.model_dir.rstrip(split).split(split)[-1]
         return {
             "object": "list",
             "data": [
                 {
-                    "id": self.model.config.model_dir,
+                    "id": model_name,
                     "object": "model",
                     "created": int(time.time()),
                     "owned_by": "Meta",
@@ -296,15 +305,19 @@ class IllamaServer:
 
                     elif isinstance(task, EmbeddingsTask):
                         gen_settings = ExLlamaV2Sampler.Settings()
-                        input_ids = self.tokenizer.encode(task.request.input)
-                        job = ExLlamaV2DynamicJob(
-                            input_ids=input_ids,
-                            max_new_tokens=0,
-                            gen_settings=gen_settings,
-                            return_hidden_state=True,
-                        )
-                        task.job = job
-                        self.generator.enqueue(job)
+                        texts = task.request.input
+                        if not isinstance(texts, list):
+                            texts = [texts]
+                        for text in texts:
+                            input_ids = self.tokenizer.encode(text)
+                            job = ExLlamaV2DynamicJob(
+                                input_ids=input_ids,
+                                max_new_tokens=0,
+                                gen_settings=gen_settings,
+                                return_hidden_state=True,
+                            )
+                            task.job = job
+                            self.generator.enqueue(job)
                     else:
                         print("Unhandled task:", type(task))
                         continue
