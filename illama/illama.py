@@ -305,19 +305,15 @@ class IllamaServer:
 
                     elif isinstance(task, EmbeddingsTask):
                         gen_settings = ExLlamaV2Sampler.Settings()
-                        texts = task.request.input
-                        if not isinstance(texts, list):
-                            texts = [texts]
-                        for text in texts:
-                            input_ids = self.tokenizer.encode(text)
-                            job = ExLlamaV2DynamicJob(
-                                input_ids=input_ids,
-                                max_new_tokens=0,
-                                gen_settings=gen_settings,
-                                return_hidden_state=True,
-                            )
-                            task.job = job
-                            self.generator.enqueue(job)
+                        input_ids = self.tokenizer.encode(task.request.input)
+                        job = ExLlamaV2DynamicJob(
+                            input_ids=input_ids,
+                            max_new_tokens=0,
+                            gen_settings=gen_settings,
+                            return_hidden_state=True,
+                        )
+                        task.job = job
+                        self.generator.enqueue(job)
                     else:
                         print("Unhandled task:", type(task))
                         continue
