@@ -296,10 +296,14 @@ class IllamaServer:
                                 task.request.presence_penalty
                             )
 
+                        stop_conditions = self.get_eos_token_ids()
+                        if task.request.stop is not None:
+                            stop_conditions.extend(task.request.stop)
+                        
                         job = ExLlamaV2DynamicJob(
                             input_ids=task.sequence_tokens.unsqueeze(0),
                             max_new_tokens=task.request.max_tokens,
-                            stop_conditions=self.get_eos_token_ids(),
+                            stop_conditions=stop_conditions,
                             gen_settings=gen_settings,
                         )
                         task.job = job
@@ -414,11 +418,14 @@ class IllamaServer:
                 exl_module = self.model.modules_dict[name]
                 if exl_module is not None:
                     if exl_module.name == "Embedding":
-                        exl_module.embedding.weight = torch.nn.Parameter(param.half().to(exl_module.embedding.weight.device), requires_grad=False)
+                        exl_module.embedding.weight = torch.nn.Parameter(
+                            param.half().to(exl_module.embedding.weight.device), requires_grad=False)
                     elif exl_module.name == "Linear":
-                        exl_module.linear.weight = torch.nn.Parameter(param.half().to(exl_module.linear.weight.device), requires_grad=False)
+                        exl_module.linear.weight = torch.nn.Parameter(
+                            param.half().to(exl_module.linear.weight.device), requires_grad=False)
                     elif exl_module.name == "RMSNorm":
-                        exl_module.weight = torch.nn.Parameter(param.half().to(exl_module.weight.device), requires_grad=False)
+                        exl_module.weight = torch.nn.Parameter(
+                            param.half().to(exl_module.weight.device), requires_grad=False)
                     else:
                         print("Unhandled layer type:", exl_module.name)
                         checkpoint_failed = True
