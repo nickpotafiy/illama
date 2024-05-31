@@ -53,6 +53,7 @@ class IllamaServer:
         model_path: str,
         batch_size: int = 5,
         max_chunk_size: int = 256,
+        checkpoint_path: str = None,
         verbose: bool = False,
     ):
         self.ip: str = ip
@@ -60,6 +61,7 @@ class IllamaServer:
         self.model_path: str = model_path
         self.batch_size: int = batch_size
         self.max_chunk_size = max_chunk_size
+        self.checkpoint_path = checkpoint_path
         self.verbose: bool = verbose
 
         self.model: ExLlamaV2 = None
@@ -403,6 +405,10 @@ class IllamaServer:
         self.model = ExLlamaV2(self.config)
         self.cache = ExLlamaV2Cache(self.model, max_seq_len=total_context, lazy=True)
         self.model.load_autosplit(cache=self.cache, progress=True)
+        if self.checkpoint_path is not None:
+            self.model.model.load_checkpoint(self.checkpoint_path)
+            self.model.model.eval() # ensure eval mode
+
 
         self.generator = ExLlamaV2DynamicGenerator(
             model=self.model,
