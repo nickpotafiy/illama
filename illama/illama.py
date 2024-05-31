@@ -406,8 +406,29 @@ class IllamaServer:
         self.cache = ExLlamaV2Cache(self.model, max_seq_len=total_context, lazy=True)
         self.model.load_autosplit(cache=self.cache, progress=True)
         if self.checkpoint_path is not None:
-            self.model.model.load_checkpoint(self.checkpoint_path)
-            self.model.model.eval() # ensure eval mode
+            checkpoint_failed = False
+            checkpoint = torch.load(self.checkpoint_path, map_location=torch.device('cpu'))
+            model_state_dict = checkpoint['model_state_dict']
+            for name, param in model_state_dict.items():
+                name = name.replace('.weight', '')
+                exl_module = self.model.modules_dict[name]
+                if exl_module is not None:
+                    if exl_module.name == "Embedding":
+                        exl_module.embedding.weight = torch.nn.Parameter(param.half().to(exl_module.embedding.weight.device), requires_grad=False)
+                    elif exl_module.name == "Linear":
+                        exl_module.linear.weight = torch.nn.Parameter(param.half().to(exl_module.linear.weight.device), requires_grad=False)
+                    elif exl_module.name == "RMSNorm":
+                        exl_module.weight = torch.nn.Parameter(param.half().to(exl_module.weight.device), requires_grad=False)
+                    else:
+                        print("Unhandled layer type:", exl_module.name)
+                        checkpoint_failed = True
+                        break
+                else:
+                    checkpoint_failed = True
+                    print("Could not find module:", name)
+                    break
+            if checkpoint_failed:
+                print("Loading checkpoint failed.")
 
 
         self.generator = ExLlamaV2DynamicGenerator(
