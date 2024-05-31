@@ -36,7 +36,7 @@ class IllamaServer:
     Initialize Illama server
 
     Args:
-        ip (str): The IP address of the server.
+        host (str): The host of the server.
         port (int): The port number of the server.
         model_path (str): The path to the model to serve.
         batch_size (int, optional): The batch size for processing tasks. Defaults to 5.
@@ -48,7 +48,7 @@ class IllamaServer:
 
     def __init__(
         self,
-        ip: str,
+        host: str,
         port: int,
         model_path: str,
         batch_size: int = 5,
@@ -56,7 +56,7 @@ class IllamaServer:
         checkpoint_path: str = None,
         verbose: bool = False,
     ):
-        self.ip: str = ip
+        self.host: str = host
         self.port: int = port
         self.model_path: str = model_path
         self.batch_size: int = batch_size
@@ -426,8 +426,8 @@ class IllamaServer:
         self.abort_event.set()
 
     def serve(self):
-        print(f":: Starting OpenAI-compatible server on {self.ip} port {self.port}")
+        print(f":: Starting OpenAI-compatible server on {self.host} port {self.port}")
         self.load()
         self.app = FastAPI(on_startup=[self.on_startup])
         self.add_routes()
-        uvicorn.run(self.app, host=self.ip, port=self.port)
+        uvicorn.run(self.app, host=self.host, port=self.port)
