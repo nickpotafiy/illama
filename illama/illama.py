@@ -63,9 +63,9 @@ class IllamaServer:
         self.port: int = port
         self.model_path: str = model_path
         self.batch_size: int = batch_size
-        self.max_chunk_size = max_chunk_size
-        self.checkpoint_path = checkpoint_path
-        self.tokenizer_path = tokenizer_path,
+        self.max_chunk_size: int = max_chunk_size
+        self.checkpoint_path: str = checkpoint_path
+        self.tokenizer_path: str = tokenizer_path
         self.verbose: bool = verbose
 
         self.model: ExLlamaV2 = None
