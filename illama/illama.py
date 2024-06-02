@@ -43,6 +43,8 @@ class IllamaServer:
         max_chunk_size (int, optional): Maximum number of tokens to process in parallel during prefill (prompt ingestion). Should not
             exceed the model's max_input_len but can be lowered to trade off prompt speed for a shorter
             interruption to ongoing jobs when a new job is started. Defaults to 256.
+        checkpoint_path (str, optional): The path to a checkpoint to load. Defaults to None.
+        tokenizer_path (str, optional): The path to a tokenizer to load. Defaults to None.
         verbose (bool, optional): Whether to print verbose output. Defaults to False.
     """
 
@@ -54,6 +56,7 @@ class IllamaServer:
         batch_size: int = 5,
         max_chunk_size: int = 256,
         checkpoint_path: str = None,
+        tokenizer_path: str = None,
         verbose: bool = False,
     ):
         self.host: str = host
@@ -62,6 +65,7 @@ class IllamaServer:
         self.batch_size: int = batch_size
         self.max_chunk_size = max_chunk_size
         self.checkpoint_path = checkpoint_path
+        self.tokenizer_path = tokenizer_path,
         self.verbose: bool = verbose
 
         self.model: ExLlamaV2 = None
@@ -405,7 +409,13 @@ class IllamaServer:
         self.config.max_input_len = max_chunk_size
         self.config.max_attention_size = max_chunk_size**2
         self.config.prepare()
-        self.tokenizer = ExLlamaV2Tokenizer(self.config)
+        if self.tokenizer_path is not None:
+            model_path = self.config.model_dir
+            self.config.model_dir = self.tokenizer_path
+            self.tokenizer = ExLlamaV2Tokenizer(self.config)
+            self.config.model_dir = model_path
+        else:
+            self.tokenizer = ExLlamaV2Tokenizer(self.config)
         self.model = ExLlamaV2(self.config)
         self.cache = ExLlamaV2Cache(self.model, max_seq_len=total_context, lazy=True)
         self.model.load_autosplit(cache=self.cache, progress=True)
@@ -419,13 +429,13 @@ class IllamaServer:
                 if exl_module is not None:
                     if exl_module.name == "Embedding":
                         exl_module.embedding.weight = torch.nn.Parameter(
-                            param.half().to(exl_module.embedding.weight.device), requires_grad=False)
+                            param.half().to(exl_module.embedding.weight.device))
                     elif exl_module.name == "Linear":
                         exl_module.linear.weight = torch.nn.Parameter(
-                            param.half().to(exl_module.linear.weight.device), requires_grad=False)
+                            param.half().to(exl_module.linear.weight.device))
                     elif exl_module.name == "RMSNorm":
                         exl_module.weight = torch.nn.Parameter(
-                            param.half().to(exl_module.weight.device), requires_grad=False)
+                            param.half().to(exl_module.weight.device))
                     else:
                         print("Unhandled layer type:", exl_module.name)
                         checkpoint_failed = True
@@ -436,6 +446,8 @@ class IllamaServer:
                     break
             if checkpoint_failed:
                 print("Loading checkpoint failed.")
+            else:
+                print("Successfully loaded checkpoint:", self.checkpoint_path)
 
 
         self.generator = ExLlamaV2DynamicGenerator(
