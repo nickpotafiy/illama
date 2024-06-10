@@ -26,9 +26,25 @@ conda create -n illama python=3.10
 conda activate illama
 ```
 
+## Install PyTorch
+
+Install [Nvidia Cuda Toolkit](https://developer.nvidia.com/cuda-toolkit-archive) and [PyTorch](https://pytorch.org/get-started/locally/). Ideally, both versions should match to minimize incompatibilities. PyTorch CUDA `12.1` is recommended with Nvidia CUDA Toolkit 12.1+.
+
+### Install Torch w/ Pip
+
+```bash
+pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
+### Install Torch w/ Conda
+
+```bash
+conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+```
+
 ### Requirements
 
-Install the required packages.
+Next, install `requirements.txt`.
 
 ```bash
 pip3 install -r requirements.txt
@@ -38,8 +54,20 @@ This will install [ExLlamaV2](https://github.com/turboderp/exllamav2) and the re
 
 ## Running the Server
 
-To start illama run this command:
+To start illama server, run this command:
 
 ```bash
 python server.py --model-path "<path>" --batch-size 10 --host "0.0.0.0" --port 5000 --verbose
 ```
+
+Run `python server.py --help` to get a list of all available options.
+
+## Troubleshooting
+
+If you get an error saying `OSError: CUDA_HOME environment variable is not set. Please set it to your CUDA install root`, that typically means PyTorch was not installed correctly. You can verify PyTorch installation by activating your environment and executing `python`:
+
+```python
+import torch
+torch.version.cuda
+```
+If you don't get your PyTorch CUDA version, then it was not installed correctly. You may have installed PyTorch without CUDA (like a Preview build).
