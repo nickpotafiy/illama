@@ -1,5 +1,0 @@
-packaging
-flash-attn
-git+https://github.com/nickpotafiy/exllamav2.git
-tokenizers
-fastapi

@@ -8,7 +8,7 @@
 - **GPU Focused** - Distribute model across any number of local GPUs.
 - Uses [FlashAttention 2](https://github.com/Dao-AILab/flash-attention) with Paged Attention by default
 
-## Installation
+## Getting Started
 
 To get started, clone the repo.
 
@@ -42,15 +42,16 @@ pip3 install torch torchvision torchaudio --index-url https://download.pytorch.o
 conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
 ```
 
-### Requirements
+Check Torch CUDA version with: `python -c "import torch; print(torch.version.cuda)"`
 
-Next, install `requirements.txt`.
+### Install Dependencies
+
+Next, install all the necessary dependencies.
 
 ```bash
-pip3 install -r requirements.txt
+pip install flash-attn
+pip install git+https://github.com/nickpotafiy/exllamav2.git
 ```
-
-This will install [ExLlamaV2](https://github.com/turboderp/exllamav2) and the required libraries.
 
 ## Running the Server
 
