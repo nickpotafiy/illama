@@ -181,7 +181,7 @@ class EmbeddingsTask(Task):
     def __init__(self, request: EmbeddingsRequest):
         super().__init__()
         self.request: EmbeddingsRequest = request
-        self.hidden_state: torch.Tensor = None
+        self.last_state: torch.Tensor = None
 
 
 class EmbeddingsResponse:
@@ -193,7 +193,7 @@ class EmbeddingsResponse:
         self.request: EmbeddingsRequest = request
 
     def json(self):
-        hidden_state = self.task.hidden_state
+        hidden_state = self.task.last_state
         if hidden_state is None:
             hidden_state = []
         else:

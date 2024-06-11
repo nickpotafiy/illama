@@ -49,7 +49,7 @@ Check Torch CUDA version with: `python -c "import torch; print(torch.version.cud
 Next, install all the necessary dependencies.
 
 ```bash
-pip install flash-attn
+pip install flash-attn pydantic rich tokenizers uvicorn fastapi
 pip install git+https://github.com/nickpotafiy/exllamav2.git
 ```
 

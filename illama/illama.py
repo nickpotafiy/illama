@@ -320,7 +320,7 @@ class IllamaServer:
                             input_ids=input_ids,
                             max_new_tokens=0,
                             gen_settings=gen_settings,
-                            return_hidden_state=True,
+                            return_last_state=True,
                         )
                         task.job = job
                         self.generator.enqueue(job)
@@ -380,9 +380,9 @@ class IllamaServer:
                                         await asyncio.sleep(0.01)
                                 elif isinstance(task, EmbeddingsTask):
                                     if "eos" in result and result["eos"] is True:
-                                        if "hidden_state" in result:
-                                            task.hidden_state = result[
-                                                "hidden_state"
+                                        if "last_state" in result:
+                                            task.last_state = result[
+                                                "last_state"
                                             ].squeeze()
                                         finish_reason = "stop"
                                         chat_status = TaskStatus.COMPLETED
