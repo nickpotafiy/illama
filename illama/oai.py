@@ -200,7 +200,7 @@ class EmbeddingsResponse:
             if isinstance(hidden_state, torch.Tensor):
                 hidden_state = hidden_state.tolist()
             else:
-                assert isinstance(hidden_state, torch.Tensor), "Invalid indden state type " + getattr(hidden_state)
+                assert isinstance(hidden_state, torch.Tensor), "Invalid hidden state type " + getattr(hidden_state)
         return {
             "object": "list",
             "data": [
