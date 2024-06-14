@@ -381,9 +381,14 @@ class IllamaServer:
                                 elif isinstance(task, EmbeddingsTask):
                                     if "eos" in result and result["eos"] is True:
                                         if "last_state" in result:
-                                            task.last_state = result[
+                                            last_state = result[
                                                 "last_state"
-                                            ].squeeze()
+                                            ]
+                                            # if len(last_state.shape) > 1:
+                                                # print("Last state input", task.request.input, "index", i, "State", last_state[:,0:10])
+                                            # else:
+                                                # print("Last state input", task.request.input, "index", i, "State", last_state[0:10])
+                                            task.last_state = last_state
                                         finish_reason = "stop"
                                         chat_status = TaskStatus.COMPLETED
                                         task.set_status(chat_status)
@@ -459,7 +464,8 @@ class IllamaServer:
             paged=True,
         )
 
-        self.generator.warmup()
+        # self.generator.warmup()
+        # self.cache.current_seq_len = 0
         self.running = True
 
     def handle_interrupt(self, signum, frame):
