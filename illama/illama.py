@@ -187,10 +187,10 @@ class IllamaServer:
         return response.json(usage=True)
 
     async def handle_models(self) -> dict:
-        if '\\' in self.model.config.model_dir:
-            split = '\\'
+        if "\\" in self.model.config.model_dir:
+            split = "\\"
         else:
-            split = '/'
+            split = "/"
         model_name = self.model.config.model_dir.rstrip(split).split(split)[-1]
         return {
             "object": "list",
@@ -303,7 +303,7 @@ class IllamaServer:
                         stop_conditions = self.get_eos_token_ids()
                         if task.request.stop is not None:
                             stop_conditions.extend(task.request.stop)
-                        
+
                         job = ExLlamaV2DynamicJob(
                             input_ids=task.sequence_tokens.unsqueeze(0),
                             max_new_tokens=task.request.max_tokens,
@@ -381,14 +381,7 @@ class IllamaServer:
                                 elif isinstance(task, EmbeddingsTask):
                                     if "eos" in result and result["eos"] is True:
                                         if "last_state" in result:
-                                            last_state = result[
-                                                "last_state"
-                                            ]
-                                            # if len(last_state.shape) > 1:
-                                                # print("Last state input", task.request.input, "index", i, "State", last_state[:,0:10])
-                                            # else:
-                                                # print("Last state input", task.request.input, "index", i, "State", last_state[0:10])
-                                            task.last_state = last_state
+                                            task.last_state = result["last_state"]
                                         finish_reason = "stop"
                                         chat_status = TaskStatus.COMPLETED
                                         task.set_status(chat_status)
@@ -426,21 +419,26 @@ class IllamaServer:
         self.model.load_autosplit(cache=self.cache, progress=True)
         if self.checkpoint_path is not None:
             checkpoint_failed = False
-            checkpoint = torch.load(self.checkpoint_path, map_location=torch.device('cpu'))
-            model_state_dict = checkpoint['model_state_dict']
+            checkpoint = torch.load(
+                self.checkpoint_path, map_location=torch.device("cpu")
+            )
+            model_state_dict = checkpoint["model_state_dict"]
             for name, param in model_state_dict.items():
-                name = name.replace('.weight', '')
+                name = name.replace(".weight", "")
                 exl_module = self.model.modules_dict[name]
                 if exl_module is not None:
                     if exl_module.name == "Embedding":
                         exl_module.embedding.weight = torch.nn.Parameter(
-                            param.half().to(exl_module.embedding.weight.device))
+                            param.half().to(exl_module.embedding.weight.device)
+                        )
                     elif exl_module.name == "Linear":
                         exl_module.linear.weight = torch.nn.Parameter(
-                            param.half().to(exl_module.linear.weight.device))
+                            param.half().to(exl_module.linear.weight.device)
+                        )
                     elif exl_module.name == "RMSNorm":
                         exl_module.weight = torch.nn.Parameter(
-                            param.half().to(exl_module.weight.device))
+                            param.half().to(exl_module.weight.device)
+                        )
                     else:
                         print("Unhandled layer type:", exl_module.name)
                         checkpoint_failed = True
@@ -453,7 +451,6 @@ class IllamaServer:
                 print("Loading checkpoint failed.")
             else:
                 print("Successfully loaded checkpoint:", self.checkpoint_path)
-
 
         self.generator = ExLlamaV2DynamicGenerator(
             model=self.model,
