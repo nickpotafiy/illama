@@ -461,8 +461,7 @@ class IllamaServer:
             paged=True,
         )
 
-        # self.generator.warmup()
-        # self.cache.current_seq_len = 0
+        self.generator.warmup()
         self.running = True
 
     def handle_interrupt(self, signum, frame):
