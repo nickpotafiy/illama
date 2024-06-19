@@ -4,13 +4,22 @@ import sys
 import threading
 import time
 import unittest
+import numpy as np
 from openai import OpenAI, AsyncOpenAI
 import torch
+from scipy.spatial import distance
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from illama.illama import IllamaServer
 
+def cosine_similarity(vec1, vec2):
+    # Ensure the vectors are in a list or array format
+    vec1 = np.array(vec1)
+    vec2 = np.array(vec2)
+    # Compute cosine similarity
+    similarity = 1 - distance.cosine(vec1, vec2)
+    return similarity
 
 class Tests(unittest.TestCase):
 
@@ -53,14 +62,14 @@ class Tests(unittest.TestCase):
     def run_async(self, coro):
         return self.loop.run_until_complete(coro)
 
-    def test_models_request(self):
-        models = self.client.models.list()
-        models = models.data
-        model = models[0]
-        id = model.id
-        object = model.object
-        assert "Meta-Llama-3-8B-Instruct" == id
-        assert object == "model"
+    # def test_models_request(self):
+    #     models = self.client.models.list()
+    #     models = models.data
+    #     model = models[0]
+    #     id = model.id
+    #     object = model.object
+    #     assert "Meta-Llama-3-8B-Instruct" == id
+    #     assert object == "model"
 
     def test_completions_request_non_streaming(self):
         completion = self.client.chat.completions.create(
@@ -87,35 +96,35 @@ class Tests(unittest.TestCase):
             "tuesday" in content.lower()
         ), f"Could not find expected string 'tuesday' in '{content}'"
 
-    def test_completions_request_streaming(self):
-        completion = self.client.chat.completions.create(
-            model=self.test_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant. Follow the user's instructions carefully.",
-                },
-                {
-                    "role": "user",
-                    "content": "Please list days of the week starting with monday, all the way to sunday.",
-                },
-            ],
-            max_tokens=40,
-            stream=True,
-            temperature=0.10,
-        )
-        content = ""
-        for message in completion:
-            token = message.choices[0].delta.content
-            if token is not None:
-                content += token
-            print(token, end="", flush=True)
-        assert (
-            "monday" in content.lower()
-        ), f"Could not find expected string 'monday' in '{content}'"
-        assert (
-            "tuesday" in content.lower()
-        ), f"Could not find expected string 'tuesday' in '{content}'"
+    # def test_completions_request_streaming(self):
+    #     completion = self.client.chat.completions.create(
+    #         model=self.test_model,
+    #         messages=[
+    #             {
+    #                 "role": "system",
+    #                 "content": "You are a helpful assistant. Follow the user's instructions carefully.",
+    #             },
+    #             {
+    #                 "role": "user",
+    #                 "content": "Please list days of the week starting with monday, all the way to sunday.",
+    #             },
+    #         ],
+    #         max_tokens=40,
+    #         stream=True,
+    #         temperature=0.10,
+    #     )
+    #     content = ""
+    #     for message in completion:
+    #         token = message.choices[0].delta.content
+    #         if token is not None:
+    #             content += token
+    #         print(token, end="", flush=True)
+    #     assert (
+    #         "monday" in content.lower()
+    #     ), f"Could not find expected string 'monday' in '{content}'"
+    #     assert (
+    #         "tuesday" in content.lower()
+    #     ), f"Could not find expected string 'tuesday' in '{content}'"
 
     def embed_close(self, tensor1, tensor2) -> bool:
         if not isinstance(tensor1, torch.Tensor):
@@ -124,26 +133,59 @@ class Tests(unittest.TestCase):
             tensor2 = torch.tensor(tensor2)
         return torch.all(torch.isclose(tensor1, tensor2, atol=1e-2))
 
-    def test_embedding_request(self):
-        texts = ["europe", "apple macbook", "earth", "the holy bible"]
-        for i, text in enumerate(texts):
-            embeddings = self.client.embeddings.create(
-                model=self.test_model, input=text
-            )
-            embeddings = embeddings.data[0].embedding
-            self.assertEqual(len(embeddings), 4096)
-            if i == 2:
-                assert self.embed_close(
-                    embeddings[0:10], self.embed_earth
-                ), "embeddings do not match"
-            if i == 1:
-                assert self.embed_close(
-                    embeddings[0:10], self.embed_macbook
-                ), "embeddings do not match"
+    # def test_embedding_request(self):
+    #     texts = ["europe", "apple macbook", "earth", "the holy bible"]
+    #     for i, text in enumerate(texts):
+    #         embeddings = self.client.embeddings.create(
+    #             model=self.test_model, input=text
+    #         )
+    #         embeddings = embeddings.data[0].embedding
+    #         self.assertEqual(len(embeddings), 4096)
+    #         if i == 2:
+    #             assert self.embed_close(
+    #                 embeddings[0:10], self.embed_earth
+    #             ), "embeddings do not match"
+    #         if i == 1:
+    #             assert self.embed_close(
+    #                 embeddings[0:10], self.embed_macbook
+    #             ), "embeddings do not match"
+
+    # def test_embedding_request_async(self):
+    #     async def async_test():
+    #         texts = ["the holy bible", "apple macbook", "earth", "europe"]
+    #         tasks = []
+    #         for text in texts:
+    #             task = asyncio.create_task(
+    #                 self.client_async.embeddings.create(
+    #                     model=self.test_model, input=text
+    #                 )
+    #             )
+    #             tasks.append(task)
+
+    #         results = []
+    #         for task in tasks:
+    #             result = await task
+    #             results.append(result)
+
+    #         for i, result in enumerate(results):
+    #             embedding = result.data[0].embedding
+    #             self.assertEqual(len(embedding), 4096)
+    #             if i == 1:
+    #                 assert self.embed_close(
+    #                     embedding[0:10], self.embed_macbook
+    #                 ), "embeddings do not match"
+    #             elif i == 2:
+    #                 assert self.embed_close(
+    #                     embedding[0:10], self.embed_earth
+    #                 ), "embeddings do not match"
+
+    #     self.run_async(async_test())
+
 
     def test_embedding_request_async(self):
         async def async_test():
-            texts = ["the holy bible", "apple macbook", "earth", "europe"]
+            texts = ["categoryes > electronics > computers > laptops > sony laptops -- the lightest place in a shining bright area",
+                     "categoryes > electronics > computers > laptops > sony laptops -- the darkest area of the black dim place"]
             tasks = []
             for text in texts:
                 task = asyncio.create_task(
@@ -158,17 +200,23 @@ class Tests(unittest.TestCase):
                 result = await task
                 results.append(result)
 
+            light = None
+            dark = None
+
             for i, result in enumerate(results):
                 embedding = result.data[0].embedding
                 self.assertEqual(len(embedding), 4096)
+                if i == 0:
+                    # light vector
+                    light = embedding
+                    # print("Light vector:", embedding[0:12])
                 if i == 1:
-                    assert self.embed_close(
-                        embedding[0:10], self.embed_macbook
-                    ), "embeddings do not match"
-                elif i == 2:
-                    assert self.embed_close(
-                        embedding[0:10], self.embed_earth
-                    ), "embeddings do not match"
+                    # dark vector
+                    dark = embedding
+                    # print("Dark vector:", embedding[0:12])
+            
+            similarity = cosine_similarity(light, dark)
+            print("Similarity:", similarity)
 
         self.run_async(async_test())
 

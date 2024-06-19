@@ -300,7 +300,7 @@ class IllamaServer:
                                 task.request.presence_penalty
                             )
 
-                        stop_conditions = self.get_eos_token_ids()
+                        stop_conditions = self.get_eos_token_ids().copy()
                         if task.request.stop is not None:
                             stop_conditions.extend(task.request.stop)
 
