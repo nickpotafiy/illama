@@ -25,9 +25,6 @@ from illama.oai import (
     ChatCompletionsRequest,
     Task,
     TaskStatus,
-    EmbeddingsRequest,
-    EmbeddingsResponse,
-    EmbeddingsTask,
 )
 
 
@@ -86,14 +83,10 @@ class IllamaServer:
         self.app.add_api_route(
             "/v1/chat/completions", self.handle_chat_completions, methods=["POST"]
         )
-        self.app.add_api_route(
-            "/v1/embeddings", self.handle_embeddings, methods=["POST"]
-        )
         self.app.add_api_route("/v1/models", self.handle_models, methods=["GET"])
         if self.verbose:
             print("Listening on /v1/chat/completions")
             print("Listening on /v1/models")
-            print("Listening on /v1/embeddings")
 
     def count_active_tasks(self) -> int:
         return len(
@@ -165,13 +158,6 @@ class IllamaServer:
     async def add_and_wait(self, task: Task):
         await self.add_task(task)
         await self.wait_for(task)
-
-    async def handle_embeddings(self, request: EmbeddingsRequest):
-        task = EmbeddingsTask(request)
-        await self.add_and_wait(task)
-        response = EmbeddingsResponse(task, request)
-        json = response.json()
-        return json
 
     async def handle_chat_completions(self, request: ChatCompletionsRequest):
         task = ChatCompletionsTask(request)
@@ -312,18 +298,6 @@ class IllamaServer:
                         )
                         task.job = job
                         self.generator.enqueue(job)
-
-                    elif isinstance(task, EmbeddingsTask):
-                        gen_settings = ExLlamaV2Sampler.Settings()
-                        input_ids = self.tokenizer.encode(task.request.input)
-                        job = ExLlamaV2DynamicJob(
-                            input_ids=input_ids,
-                            max_new_tokens=0,
-                            gen_settings=gen_settings,
-                            return_last_state=True,
-                        )
-                        task.job = job
-                        self.generator.enqueue(job)
                     else:
                         print("Unhandled task:", type(task))
                         continue
@@ -377,15 +351,6 @@ class IllamaServer:
                                         finished_chats.append(i)
                                     if "text" in result:
                                         await task.add_delta(result["text"])
-                                        await asyncio.sleep(0.01)
-                                elif isinstance(task, EmbeddingsTask):
-                                    if "eos" in result and result["eos"] is True:
-                                        if "last_state" in result:
-                                            task.last_state = result["last_state"]
-                                        finish_reason = "stop"
-                                        chat_status = TaskStatus.COMPLETED
-                                        task.set_status(chat_status)
-                                        finished_chats.append(i)
                                         await asyncio.sleep(0.01)
                                 else:
                                     print("Unhandled task type:", type(task))

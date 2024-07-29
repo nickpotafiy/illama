@@ -11,12 +11,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from illama.illama import IllamaServer
 
-
 class Tests(unittest.TestCase):
 
     test_host = "127.0.0.1"
     test_port = 5050
-    test_model = "F:\Meta-Llama-3-8B-Instruct"
+    test_model = "F:\Meta-Llama-3.1-8B-Instruct"
 
     @classmethod
     def setUpClass(self):
@@ -49,7 +48,7 @@ class Tests(unittest.TestCase):
         model = models[0]
         id = model.id
         object = model.object
-        assert "Meta-Llama-3-8B-Instruct" == id
+        assert "Meta-Llama-3.1-8B-Instruct" == id
         assert object == "model"
 
     def test_completions_request_non_streaming(self):
