@@ -46,11 +46,17 @@ Check Torch CUDA version with: `python -c "import torch; print(torch.version.cud
 
 ### Install Dependencies
 
-Next, install all the necessary dependencies.
+Next, install all the necessary dependencies. I recommend the dev branch to include latest ExllamaV2 features.
 
 ```bash
 pip install flash-attn pydantic rich tokenizers uvicorn fastapi
-pip install git+https://github.com/nickpotafiy/exllamav2.git
+pip install git+https://github.com/turboderp/exllamav2.git@dev
+```
+
+If the dev branch doesn't work, you can default to the master branch instead, which should be fully supported:
+
+```bash
+pip install git+https://github.com/turboderp/exllamav2.git
 ```
 
 ## Running the Server
