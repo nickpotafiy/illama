@@ -33,7 +33,7 @@ Install [Nvidia Cuda Toolkit](https://developer.nvidia.com/cuda-toolkit-archive)
 ### Install Torch w/ Pip
 
 ```bash
-pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
 ### Install Torch w/ Conda
@@ -44,14 +44,21 @@ conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvi
 
 Check Torch CUDA version with: `python -c "import torch; print(torch.version.cuda)"`
 
-### Install Dependencies
+### Install Illama
 
-Next, install all the necessary dependencies.
+First, install setup libraries:
 
 ```bash
-pip install flash-attn pydantic rich tokenizers uvicorn fastapi
-pip install git+https://github.com/turboderp/exllamav2.git@95df994
+pip install packaging ninja
 ```
+
+Then, install the main package:
+
+```bash
+pip install .
+```
+
+If installation fails, you may need to `set MAX_JOBS=4` or `export MAX_JOBS=4` (or lower) depending on system memory. This is a known `flash-attn` problem.
 
 ## Running the Server
 
